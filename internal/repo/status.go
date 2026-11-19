@@ -222,6 +222,7 @@ func (rp *Repo) Unstage(paths ...string) error {
 		e.ModifiedAt, e.CreatedAt = time.Time{}, time.Time{}
 		e.Size = 0
 	}
+	idx.Cache = nil // the cached trees no longer match the entries
 	return rp.R.Storer.SetIndex(idx)
 }
 

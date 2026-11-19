@@ -134,9 +134,17 @@ func (f *fixture) fsck() {
 	if err != nil {
 		f.t.Fatalf("git fsck: %v\n%s", err, out)
 	}
-	out, err = exec.Command("git", "-C", f.dir, "status", "--porcelain").CombinedOutput()
+	out, err = exec.Command("git", "-C", f.dir, "status", "--porcelain", "--untracked-files=no").CombinedOutput()
 	if err != nil {
 		f.t.Fatalf("git status: %v\n%s", err, out)
+	}
+	// git must see the index exactly as go-git describes it
+	st, err := f.rp.Status()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if (len(strings.TrimSpace(string(out))) == 0) != !Dirty(st) {
+		f.t.Fatalf("git and gitk disagree on local changes:\ngit: %s\ngitk: %+v", out, st)
 	}
 }
 

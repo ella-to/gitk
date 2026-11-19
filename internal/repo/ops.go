@@ -287,6 +287,7 @@ func (rp *Repo) syncWorktree(from, to Hash) error {
 		}
 	}
 	slices.SortFunc(idx.Entries, func(a, b *index.Entry) int { return strings.Compare(a.Name, b.Name) })
+	idx.Cache = nil // the cached trees no longer match the entries
 	return rp.R.Storer.SetIndex(idx)
 }
 
