@@ -64,6 +64,7 @@ type Scope int
 const (
 	ScopeAll  Scope = iota // every branch, remote and tag (gitk --all)
 	ScopeHead              // HEAD's history only
+	ScopeRevs              // the history of the revisions passed to Load
 )
 
 // Graph is a loaded snapshot of the repository history.
@@ -200,9 +201,21 @@ func (rp *Repo) peel(h Hash) (Hash, bool) {
 	return h, false
 }
 
-// Load walks the history reachable from the scope's refs and returns it in
-// git's --date-order: newest first by committer date, children before parents.
-func (rp *Repo) Load(scope Scope) (*Graph, error) {
+// Resolve turns a branch, remote branch, tag, (abbreviated) hash or
+// expression like main~2 into the commit it names.
+func (rp *Repo) Resolve(rev string) (Hash, error) {
+	h, err := rp.R.ResolveRevision(plumbing.Revision(rev))
+	if err != nil {
+		return Hash{}, fmt.Errorf("unknown revision %q", rev)
+	}
+	return *h, nil
+}
+
+// Load walks the history reachable from the scope's refs (for ScopeRevs, from
+// revs) and returns it in git's --date-order: newest first by committer date,
+// children before parents. Revisions that no longer resolve, such as a branch
+// deleted since startup, are skipped.
+func (rp *Repo) Load(scope Scope, revs ...string) (*Graph, error) {
 	refs, head, headRef, err := rp.Refs()
 	if err != nil {
 		return nil, err
@@ -221,11 +234,18 @@ func (rp *Repo) Load(scope Scope) (*Graph, error) {
 	}
 
 	var tips []Hash
-	if scope == ScopeHead {
+	switch scope {
+	case ScopeHead:
 		if !head.IsZero() {
 			tips = append(tips, head)
 		}
-	} else {
+	case ScopeRevs:
+		for _, rev := range revs {
+			if h, err := rp.Resolve(rev); err == nil {
+				tips = append(tips, h)
+			}
+		}
+	default:
 		for _, r := range refs {
 			tips = append(tips, r.Hash)
 		}

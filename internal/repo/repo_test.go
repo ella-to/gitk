@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +179,46 @@ func TestLoadOrderAndRefs(t *testing.T) {
 	}
 	if !g.Contains(c2, c1) || g.Contains(c1, c2) {
 		t.Fatal("Contains")
+	}
+}
+
+func TestLoadRevs(t *testing.T) {
+	f := newFixture(t)
+	c1 := f.commit("one", "a.txt", "1\n")
+	c2 := f.commit("two", "a.txt", "2\n")
+	c3 := f.commit("three", "a.txt", "3\n")
+	if _, err := f.rp.CreateBranch("feature", c1, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rp.CreateTag("v2", c2, "release two"); err != nil {
+		t.Fatal(err)
+	}
+	load := func(revs ...string) []Hash {
+		t.Helper()
+		g, err := f.rp.Load(ScopeRevs, revs...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []Hash
+		for _, c := range g.Commits {
+			out = append(out, c.Hash)
+		}
+		return out
+	}
+	if got := load("feature"); !slices.Equal(got, []Hash{c1}) {
+		t.Fatalf("feature: %v", got)
+	}
+	if got := load("v2"); !slices.Equal(got, []Hash{c2, c1}) {
+		t.Fatalf("annotated tag: %v", got)
+	}
+	if got := load(c3.String()[:7], "feature"); !slices.Equal(got, []Hash{c3, c2, c1}) {
+		t.Fatalf("short hash: %v", got)
+	}
+	if got := load("gone", "feature"); !slices.Equal(got, []Hash{c1}) {
+		t.Fatalf("unknown revisions are skipped: %v", got)
+	}
+	if _, err := f.rp.Resolve("gone"); err == nil {
+		t.Fatal("Resolve accepted an unknown revision")
 	}
 }
 
