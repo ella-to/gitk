@@ -18,6 +18,7 @@ import (
 // Options configures the UI.
 type Options struct {
 	Scope   repo.Scope
+	Revs    []string // the revisions ScopeRevs shows
 	Light   bool
 	RelTime bool
 }
@@ -63,6 +64,7 @@ type App struct {
 	g       *repo.Graph
 	rows    []listRow
 	scope   repo.Scope
+	revs    []string
 	loading bool
 	loadSeq int
 	fp      string
@@ -186,6 +188,7 @@ func newApp(rp *repo.Repo, term *renderer.Terminal, opts Options) *App {
 		term:     term,
 		dark:     !opts.Light,
 		scope:    opts.Scope,
+		revs:     opts.Revs,
 		relTime:  opts.RelTime,
 		results:  make(chan func(), 256),
 		picked:   map[repo.Hash]bool{},
@@ -258,9 +261,9 @@ func (a *App) reload(sel repo.Hash) {
 		}
 	}
 	keepRow := a.sel
-	rp, scope, colors := a.rp, a.scope, len(a.th.Lanes)
+	rp, scope, revs, colors := a.rp, a.scope, a.revs, len(a.th.Lanes)
 	go func() {
-		g, err := rp.Load(scope)
+		g, err := rp.Load(scope, revs...)
 		var rows []graph.Row
 		if err == nil {
 			rows = graph.Layout(hashes(g), func(i int) []repo.Hash { return g.Commits[i].Parents }, colors)

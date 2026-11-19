@@ -79,13 +79,18 @@ func (h *harness) checkout(branch string, create bool) {
 // start opens the UI on the repository and waits for the first load.
 func (h *harness) start() {
 	h.t.Helper()
+	h.startWith(Options{})
+}
+
+func (h *harness) startWith(opts Options) {
+	h.t.Helper()
 	rp, err := repo.Open(h.dir)
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	h.ctx = microui.New()
 	renderer.Connect(h.ctx, h.term)
-	h.a = newApp(rp, h.term, Options{})
+	h.a = newApp(rp, h.term, opts)
 	st := renderer.TerminalStyle()
 	h.ctx.Style = &st
 	h.a.th.applyStyle(h.ctx.Style)
@@ -186,6 +191,26 @@ func TestRendersGraphRefsAndDetails(t *testing.T) {
 	h.must("d.txt")
 	if !strings.ContainsAny(h.screen(), "╯╮╰╭") {
 		t.Fatalf("expected lane connectors:\n%s", h.screen())
+	}
+}
+
+func TestRevisionsLimitHistory(t *testing.T) {
+	h := newHarness(t, 140, 40)
+	history(h)
+	h.startWith(Options{Scope: repo.ScopeRevs, Revs: []string{"feature"}})
+	h.must("feature: add c")
+	h.must("first commit")
+	if strings.Contains(h.screen(), "main: add d") {
+		t.Fatalf("main's own commit shown for feature only:\n%s", h.screen())
+	}
+	// a cycles all refs → HEAD only → the given revisions
+	for _, want := range []string{"main: add d", "HEAD only", "feature: add c"} {
+		h.typ("a")
+		h.settle()
+		h.must(want)
+	}
+	if strings.Contains(h.screen(), "main: add d") {
+		t.Fatalf("a did not return to the given revisions:\n%s", h.screen())
 	}
 }
 

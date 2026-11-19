@@ -97,7 +97,7 @@ var helpText = [][2]string{
 	{"p", "jump to first parent"},
 	{"/  n  N", "find, next, previous match"},
 	{"\\", "toggle the refs sidebar"},
-	{"a", "all refs ⟷ HEAD only"},
+	{"a", "all refs → HEAD only → given revisions"},
 	{"", "History"},
 	{"c", "cherry-pick selection onto HEAD"},
 	{"drag", "drop commits on a branch to pick"},

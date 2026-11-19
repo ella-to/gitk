@@ -131,7 +131,7 @@ func (a *App) drawHeader(overlay bool) {
 		fn    func()
 	}{
 		{"refs", a.showRefs, func() { a.showRefs = !a.showRefs }},
-		{map[repo.Scope]string{repo.ScopeAll: "all refs", repo.ScopeHead: "HEAD only"}[a.scope], true, a.toggleScope},
+		{a.scopeLabel(), true, a.toggleScope},
 		{"? help", false, a.showHelp},
 	}
 	cx := r.X + r.W
@@ -162,10 +162,25 @@ func (a *App) drawHeader(overlay bool) {
 	}
 }
 
+func (a *App) scopeLabel() string {
+	switch a.scope {
+	case repo.ScopeHead:
+		return "HEAD only"
+	case repo.ScopeRevs:
+		return truncate(strings.Join(a.revs, " "), 30)
+	}
+	return "all refs"
+}
+
+// toggleScope cycles all refs → HEAD only → the revisions given on the
+// command line (when there are any) → all refs.
 func (a *App) toggleScope() {
-	if a.scope == repo.ScopeAll {
+	switch {
+	case a.scope == repo.ScopeAll:
 		a.scope = repo.ScopeHead
-	} else {
+	case a.scope == repo.ScopeHead && len(a.revs) > 0:
+		a.scope = repo.ScopeRevs
+	default:
 		a.scope = repo.ScopeAll
 	}
 	a.reload(repo.Hash{})
