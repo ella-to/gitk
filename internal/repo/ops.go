@@ -52,11 +52,14 @@ type Op struct {
 	Head  *HeadChange
 	Sync  SyncMode
 	Note  string // extra information for the user (skipped commits, ...)
+	// Select is the commit the UI should select afterwards (the rewritten,
+	// picked or created commit); zero keeps the current selection.
+	Select Hash
 }
 
 // Inverse returns the operation that undoes op.
 func (op *Op) Inverse() *Op {
-	inv := &Op{Title: "undo " + op.Title, Sync: op.Sync}
+	inv := &Op{Title: op.Title, Sync: op.Sync}
 	if op.Sync == SyncHard {
 		inv.Sync = SyncSafe
 	}
@@ -301,13 +304,7 @@ func removeEmptyDirs(root, dir string) {
 // localTips lists the refs a history rewrite of h would move: local branches
 // containing h, plus HEAD when it is detached on top of h.
 func localTips(g *Graph, h Hash) []Ref {
-	var out []Ref
-	for _, r := range g.Refs {
-		if (r.Kind == RefLocal || r.Kind == RefHead) && g.Contains(r.Hash, h) {
-			out = append(out, r)
-		}
-	}
-	return out
+	return g.BranchesContaining(h, RefLocal, RefHead)
 }
 
 // rewrite recreates target (edited by edit) and every commit between it and
@@ -364,7 +361,7 @@ func (rp *Repo) rewrite(g *Graph, title string, target Hash, edit func(c *object
 		mapped[h] = nh
 	}
 
-	op := &Op{Title: title, Sync: SyncSafe}
+	op := &Op{Title: title, Sync: SyncSafe, Select: mapped[target]}
 	for _, r := range tips {
 		n, ok := mapped[r.Hash]
 		if !ok {
@@ -561,6 +558,9 @@ func (rp *Repo) CherryPick(hashes []Hash, branch string) (*Op, error) {
 		return nil, fmt.Errorf("nothing to cherry-pick: changes already on %s", name.Short())
 	}
 	op, err := rp.moveTo(title, name, tip, cur)
+	if op != nil {
+		op.Select = cur
+	}
 	if op != nil && len(skipped) > 0 {
 		op.Note = "skipped (already applied): " + strings.Join(skipped, ", ")
 	}
@@ -599,7 +599,11 @@ func (rp *Repo) Revert(h Hash) (*Op, error) {
 	if !applied {
 		return nil, errors.New("nothing to revert: the change is not present on HEAD")
 	}
-	return rp.moveTo("revert "+h.String()[:7], name, tip, nh)
+	op, err := rp.moveTo("revert "+h.String()[:7], name, tip, nh)
+	if op != nil {
+		op.Select = nh
+	}
+	return op, err
 }
 
 // firstParentChain returns the commits from tip back to (excluding) stop
@@ -642,34 +646,39 @@ func (rp *Repo) branchFor(g *Graph, h Hash) (Ref, error) {
 	return Ref{}, fmt.Errorf("commit is on several branches (%s): check one out first", strings.Join(names, ", "))
 }
 
-// replayChain rebuilds the linear chain of commits on top of onto.
-func (rp *Repo) replayChain(onto Hash, chain []Hash, op string) (Hash, error) {
+// replayChain rebuilds the linear chain of commits on top of onto. It
+// returns the new tip and the new hash of every replayed commit.
+func (rp *Repo) replayChain(onto Hash, chain []Hash, op string) (Hash, map[Hash]Hash, error) {
 	me, err := rp.Signature()
 	if err != nil {
-		return Hash{}, err
+		return Hash{}, nil, err
 	}
+	mapped := map[Hash]Hash{}
 	cur := onto
 	for _, h := range chain {
 		c, err := rp.R.CommitObject(h)
 		if err != nil {
-			return Hash{}, err
+			return Hash{}, nil, err
 		}
 		if c.NumParents() > 1 {
-			return Hash{}, fmt.Errorf("%s: cannot replay merge commit %s", op, h.String()[:7])
+			return Hash{}, nil, fmt.Errorf("%s: cannot replay merge commit %s", op, h.String()[:7])
 		}
 		next, applied, err := rp.pick(cur, c, me, op)
 		if err != nil {
-			return Hash{}, err
+			return Hash{}, nil, err
 		}
-		_ = applied // a commit whose change is already present is dropped, like git rebase
+		if applied { // a commit whose change is already present is dropped, like git rebase
+			mapped[h] = next
+		}
 		cur = next
 	}
-	return cur, nil
+	return cur, mapped, nil
 }
 
 // edit rebuilds the first-parent history of the branch containing h from
-// h's parent upward, with the commits produced by reorder.
-func (rp *Repo) edit(g *Graph, h Hash, title string, reorder func(parent Hash, chain []Hash) (onto Hash, replay []Hash, err error)) (*Op, error) {
+// h's parent upward, with the commits produced by reorder. The result
+// selects follow's new hash (or h's parent when follow was dropped).
+func (rp *Repo) edit(g *Graph, h, follow Hash, title string, reorder func(parent Hash, chain []Hash) (onto Hash, replay []Hash, err error)) (*Op, error) {
 	br, err := rp.branchFor(g, h)
 	if err != nil {
 		return nil, err
@@ -686,17 +695,23 @@ func (rp *Repo) edit(g *Graph, h Hash, title string, reorder func(parent Hash, c
 	if err != nil {
 		return nil, err
 	}
-	tip, err := rp.replayChain(onto, replay, title)
+	tip, mapped, err := rp.replayChain(onto, replay, title)
 	if err != nil {
 		return nil, err
 	}
-	name := br.Name
-	return rp.moveTo(title+" on "+br.Short, name, br.Hash, tip)
+	op, err := rp.moveTo(title+" on "+br.Short, br.Name, br.Hash, tip)
+	if op != nil {
+		op.Select = c.Parents[0]
+		if n, ok := mapped[follow]; ok {
+			op.Select = n
+		}
+	}
+	return op, err
 }
 
 // Drop removes h from its branch, replaying the commits above it.
 func (rp *Repo) Drop(g *Graph, h Hash) (*Op, error) {
-	return rp.edit(g, h, "drop "+h.String()[:7], func(parent Hash, chain []Hash) (Hash, []Hash, error) {
+	return rp.edit(g, h, h, "drop "+h.String()[:7], func(parent Hash, chain []Hash) (Hash, []Hash, error) {
 		return parent, slices.DeleteFunc(chain, func(x Hash) bool { return x == h }), nil
 	})
 }
@@ -705,7 +720,7 @@ func (rp *Repo) Drop(g *Graph, h Hash) (*Op, error) {
 // its branch.
 func (rp *Repo) Move(g *Graph, h Hash, up bool) (*Op, error) {
 	if up {
-		return rp.edit(g, h, "move "+h.String()[:7]+" up", func(parent Hash, chain []Hash) (Hash, []Hash, error) {
+		return rp.edit(g, h, h, "move "+h.String()[:7]+" up", func(parent Hash, chain []Hash) (Hash, []Hash, error) {
 			if len(chain) < 2 {
 				return Hash{}, nil, errors.New("already the newest commit on the branch")
 			}
@@ -721,7 +736,7 @@ func (rp *Repo) Move(g *Graph, h Hash, up bool) (*Op, error) {
 	if p == nil || len(p.Parents) != 1 {
 		return nil, errors.New("cannot move below a root or merge commit")
 	}
-	return rp.edit(g, p.Hash, "move "+h.String()[:7]+" down", func(parent Hash, chain []Hash) (Hash, []Hash, error) {
+	return rp.edit(g, p.Hash, h, "move "+h.String()[:7]+" down", func(parent Hash, chain []Hash) (Hash, []Hash, error) {
 		if len(chain) < 2 || chain[1] != h {
 			return Hash{}, nil, errors.New("commit is not on the first-parent line of its branch")
 		}
@@ -931,11 +946,12 @@ func (rp *Repo) Commit(msg string, amend bool) (*Op, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	title := "commit " + nh.String()[:7]
 	if amend {
 		title = "amend " + tip.String()[:7]
 	}
-	op := &Op{Title: title, Sync: SyncNone}
+	op := &Op{Title: title, Sync: SyncNone, Select: nh}
 	if name == plumbing.HEAD {
 		op.Head = &HeadChange{Old: plumbing.NewHashReference(plumbing.HEAD, tip), New: plumbing.NewHashReference(plumbing.HEAD, nh)}
 	} else {

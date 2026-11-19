@@ -351,15 +351,28 @@ func (g *Graph) Contains(tip, ancestor Hash) bool {
 	return false
 }
 
-// BranchesContaining lists the local branches (and HEAD) whose history
-// includes h.
+// BranchesContaining lists the refs of the given kinds (all kinds when none
+// are given) whose history includes h, in g.Refs order. It walks h's
+// descendants once instead of searching from every ref.
 func (g *Graph) BranchesContaining(h Hash, kinds ...RefKind) []Ref {
+	if _, ok := g.Index[h]; !ok {
+		return nil
+	}
+	reached := map[Hash]bool{h: true}
+	queue := []Hash{h}
+	for len(queue) > 0 {
+		cur := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+		for _, ch := range g.Children[cur] {
+			if !reached[ch] {
+				reached[ch] = true
+				queue = append(queue, ch)
+			}
+		}
+	}
 	var out []Ref
 	for _, r := range g.Refs {
-		if len(kinds) > 0 && !slices.Contains(kinds, r.Kind) {
-			continue
-		}
-		if g.Contains(r.Hash, h) {
+		if (len(kinds) == 0 || slices.Contains(kinds, r.Kind)) && reached[r.Hash] {
 			out = append(out, r)
 		}
 	}
