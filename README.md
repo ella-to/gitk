@@ -8,11 +8,12 @@ Built with [ella.to/microui](https://ella.to/microui) for the UI and
 
 ```sh
 go install ella.to/gitk@latest
-gitk                 # the repository containing the current directory
-gitk ~/src/project   # or any path inside a repository
-gitk -head           # only HEAD's history (default: all refs, like gitk --all)
-gitk -relative       # "3 hours ago" dates (toggle with T)
-gitk -light          # light theme (toggle with L)
+gitk                     # every branch, remote and tag (like gitk --all)
+gitk main v1.2 3f9c2a1   # only the history of these branches, tags and commits
+gitk -C ~/src/project    # a repository other than the current directory's
+gitk -head               # only HEAD's history
+gitk -relative           # "3 hours ago" dates (toggle with T)
+gitk -light              # light theme (toggle with L)
 ```
 
 ## Layout
@@ -104,7 +105,7 @@ How the edits work:
 | `[` `]` | less / more diff context |
 | `,` `.` | previous / next file in the diff |
 | `y` `Y` | copy hash (or file path) / subject (pbcopy, wl-copy, xclip or OSC 52) |
-| `a` | all refs ⟷ HEAD only |
+| `a` | all refs → HEAD only → the revisions given on the command line |
 | `R` | reload |
 | `?` | help |
 | `q` | quit |
