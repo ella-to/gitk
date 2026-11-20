@@ -1,13 +1,34 @@
 # gitk (terminal)
 
-A terminal take on `gitk --all`: the commit graph with colored branch lanes,
-commit details and diffs, and history editing with the mouse or the keyboard.
-Built with [ella.to/microui](https://ella.to/microui) for the UI and
-[go-git](https://github.com/go-git/go-git) for everything git, so it needs no
-`git` binary.
+A terminal take on `gitk --all`: browse the commit graph, read diffs, and
+rewrite history (cherry-pick, reword, squash, reorder, drop) with the mouse
+or the keyboard, with undo for every change.
+
+## Highlights
+
+* **The whole graph at a glance**: colored branch lanes, ref badges, and your
+  uncommitted changes as rows on top, just like gitk.
+* **Readable diffs**: line numbers, word-level highlights, adjustable context,
+  and a file list that follows you as you scroll.
+* **History editing without the ceremony**: drag commits onto a branch to
+  cherry-pick them, reword any commit on a local branch, squash, move and
+  drop commits. Every operation can be undone with `u`.
+* **Safe by default**: conflicts abort without changing anything, and your
+  unrelated local edits are never touched.
+* **No `git` binary needed**: everything runs in-process on
+  [go-git](https://github.com/go-git/go-git); the UI is built with
+  [ella.to/microui](https://ella.to/microui).
+* **Live**: the view reloads by itself when the repository changes on disk.
+
+## Install
 
 ```sh
 go install ella.to/gitk@latest
+```
+
+## Usage
+
+```sh
 gitk                     # every branch, remote and tag (like gitk --all)
 gitk main v1.2 3f9c2a1   # only the history of these branches, tags and commits
 gitk -C ~/src/project    # a repository other than the current directory's
@@ -16,24 +37,12 @@ gitk -relative           # "3 hours ago" dates (toggle with T)
 gitk -light              # light theme (toggle with L)
 ```
 
+Press `?` inside gitk for the full list of keys, and `a` to cycle between all
+refs, HEAD only, and the revisions given on the command line.
+
 ## Layout
 
-```
- gitk  poirot  on main  ● 2 changed  23 commits · 2 branches            refs  all refs  ? help
- ◌  Local changes, not staged  2 files
- ◉   ◆ main  docs: describe the daemon/client architecture           Ali   2026-11-19 10:08 b8328d0
- ●─╮ feat(cli): add urfave/cli commands                              Ali   2026-11-19 10:08 96655cd
- │ ●  feature  feat(ui): render daemon snapshots                     Ali   2026-11-19 10:08 6a68f2b
- ●─╯ feat(client): add socket client and snapshot watcher            Ali   2026-11-19 10:08 21575c8
-── 96655cd · 3/24 ──────────────────────────────────────────────────────────────────────────────
-─ Details · 5 files · context 3 ──────────────────────────────│─ Files (5) ─────────────────────
- Commit:    96655cdfcbc04688b772b4cca05f75509eaa914b          │ A cmd/poirot/main.go     +15 −0
- Author:    Ali Najafizadeh <…>  2026-11-19 10:08             │ A internal/command/…    +247 −0
- Parent:    6a68f2b  feat(ui): render daemon snapshots …      │
- Branches:  main                                              │
- Follows:   v0.1.0                                            │
- …diff with line numbers and intraline highlights…            │
-```
+![gitk in a terminal: the commit list with the context menu open, and the details and files panes below](docs/screenshot.webp)
 
 * **Commit list**: one row per commit with lanes drawn in rounded box
   characters, ref badges (HEAD branch `◆`, local, remote, tags `⚑`), author,
