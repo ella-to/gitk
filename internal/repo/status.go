@@ -248,11 +248,11 @@ func (rp *Repo) Discard(changes ...Change) error {
 		if err != nil {
 			return err
 		}
-		fc, err := rp.blob(e.Hash, e.Mode)
+		data, err := rp.blobBytes(e.Hash) // full content: blob() truncates for diffs
 		if err != nil {
 			return err
 		}
-		if err := writeWorktreeFile(full, fc); err != nil {
+		if err := writeWorktreeFile(full, FileContent{Exists: true, Data: data, Mode: e.Mode}); err != nil {
 			return err
 		}
 	}
