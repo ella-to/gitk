@@ -481,3 +481,59 @@ func TestStageUnstageCommit(t *testing.T) {
 	}
 	f.fsck()
 }
+
+func TestResetHard(t *testing.T) {
+	f := newFixture(t)
+	big := strings.Repeat("0123456789abcdef", (5<<20)/16) // larger than the diff limit
+	base := f.commit("base", "a.txt", "a1\n", "keep.txt", "k\n", "big.bin", big, ".gitignore", "ignored/\n")
+	f.commit("two", "a.txt", "a2\n", "dir/new.txt", "n\n")
+
+	f.write("keep.txt", "local edit\n")
+	f.write("untracked.txt", "u\n")
+	f.write("ignored/x.js", "x\n")
+	f.write("staged.txt", "s\n")
+	if err := f.rp.Stage("staged.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(f.dir, "big.bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	op, err := f.rp.Reset(base, SyncHard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.read("a.txt") != "a1\n" || f.read("keep.txt") != "k\n" || f.read("big.bin") != big {
+		t.Fatal("tracked files not reset")
+	}
+	for _, p := range []string{"dir/new.txt", "dir", "staged.txt"} {
+		if _, err := os.Stat(filepath.Join(f.dir, p)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be gone: %v", p, err)
+		}
+	}
+	if f.read("untracked.txt") != "u\n" || f.read("ignored/x.js") != "x\n" {
+		t.Fatal("untracked files must survive")
+	}
+	f.clean()
+	f.fsck()
+
+	// reset --hard onto the current commit discards local changes
+	f.write("a.txt", "dirty\n")
+	if _, err := f.rp.Reset(base, SyncHard); err != nil {
+		t.Fatal(err)
+	}
+	if f.read("a.txt") != "a1\n" {
+		t.Fatal("reset --hard HEAD kept the local change")
+	}
+	f.clean()
+
+	// undo brings the second commit back
+	if err := f.rp.Apply(op.Inverse()); err != nil {
+		t.Fatal(err)
+	}
+	if f.read("a.txt") != "a2\n" || f.read("dir/new.txt") != "n\n" {
+		t.Fatal("undo did not restore the files")
+	}
+	f.clean()
+	f.fsck()
+}

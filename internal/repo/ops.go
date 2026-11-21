@@ -3,6 +3,7 @@ package repo
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -180,18 +181,123 @@ func (rp *Repo) Apply(op *Op) error {
 			return err
 		}
 	}
-	if after != before && (op.Sync == SyncMixed || op.Sync == SyncHard) && rp.Root != "" {
+	if rp.Root == "" {
+		return nil
+	}
+	switch op.Sync {
+	case SyncHard:
+		// also when HEAD does not move: reset --hard HEAD discards changes
+		return rp.resetHard(after)
+	case SyncMixed:
 		wt, err := rp.R.Worktree()
 		if err != nil {
 			return err
 		}
-		mode := git.MixedReset
-		if op.Sync == SyncHard {
-			mode = git.HardReset
-		}
-		return wt.Reset(&git.ResetOptions{Commit: after, Mode: mode})
+		return wt.Reset(&git.ResetOptions{Commit: after, Mode: git.MixedReset})
 	}
 	return nil
+}
+
+// resetHard makes the index and the tracked files match commit h, like
+// git reset --hard. Untracked files are left alone. It trusts the stat data
+// recorded in the index to skip files that already match, so it costs one
+// lstat per tracked file plus the writes; go-git's hard Reset instead hashes
+// the whole working tree, ignored directories such as node_modules included.
+func (rp *Repo) resetHard(h Hash) error {
+	idx, err := rp.R.Storer.Index()
+	if err != nil {
+		return err
+	}
+	old := map[string]*index.Entry{}
+	for _, e := range idx.Entries {
+		if e.Stage == 0 { // not a conflict stage (go-git's index.Merged is 1, not 0)
+			old[e.Name] = e
+		}
+	}
+
+	var entries []*index.Entry
+	keep := map[string]bool{}
+	if !h.IsZero() {
+		tt, err := rp.commitTree(h)
+		if err != nil {
+			return err
+		}
+		w := object.NewTreeWalker(tt, true, nil)
+		defer w.Close()
+		for {
+			name, e, err := w.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if e.Mode == filemode.Dir {
+				continue
+			}
+			keep[name] = true
+			full := filepath.Join(rp.Root, filepath.FromSlash(name))
+			if oe := old[name]; oe != nil && oe.Hash == e.Hash && oe.Mode == e.Mode &&
+				(e.Mode == filemode.Submodule || statMatches(full, oe)) {
+				entries = append(entries, oe)
+				continue
+			}
+			ne := &index.Entry{Name: name, Hash: e.Hash, Mode: e.Mode}
+			if e.Mode != filemode.Submodule {
+				data, err := rp.blobBytes(e.Hash)
+				if err != nil {
+					return err
+				}
+				if err := writeWorktreeFile(full, FileContent{Exists: true, Data: data, Mode: e.Mode}); err != nil {
+					return err
+				}
+				if fi, err := os.Lstat(full); err == nil {
+					ne.ModifiedAt, ne.Size = fi.ModTime(), uint32(fi.Size())
+				}
+			}
+			entries = append(entries, ne)
+		}
+	}
+
+	// tracked (or conflicted) paths the target does not have are deleted
+	for _, e := range idx.Entries {
+		if keep[e.Name] || e.Mode == filemode.Submodule {
+			continue
+		}
+		keep[e.Name] = true // once per path, whatever its stages
+		full := filepath.Join(rp.Root, filepath.FromSlash(e.Name))
+		if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		removeEmptyDirs(rp.Root, filepath.Dir(full))
+	}
+
+	slices.SortFunc(entries, func(a, b *index.Entry) int { return strings.Compare(a.Name, b.Name) })
+	idx.Entries = entries
+	idx.Cache = nil
+	idx.ResolveUndo = nil
+	return rp.R.Storer.SetIndex(idx)
+}
+
+// statMatches reports whether the file at full still looks like what the
+// index entry recorded (same mtime, size and kind), the check git itself uses
+// to avoid rehashing unchanged files.
+func statMatches(full string, e *index.Entry) bool {
+	if e.ModifiedAt.IsZero() {
+		return false
+	}
+	fi, err := os.Lstat(full)
+	if err != nil || !fi.ModTime().Equal(e.ModifiedAt) || uint32(fi.Size()) != e.Size {
+		return false
+	}
+	switch m := fi.Mode(); {
+	case m&os.ModeSymlink != 0:
+		return e.Mode == filemode.Symlink
+	case m.IsRegular():
+		exec := m&0o111 != 0
+		return (e.Mode == filemode.Executable) == exec && (e.Mode == filemode.Regular || exec)
+	}
+	return false
 }
 
 // syncWorktree rewrites the index entries and working files that differ
